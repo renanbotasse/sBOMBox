@@ -57,6 +57,15 @@ class TestOsvToFinding:
     def test_severity_numeric_cvss_dict(self):
         f = osv_to_finding(_osv_raw(severity=[{"type": "CVSS_V3", "score": 9.8}]))
         assert f.severity == "CRITICAL"
+        assert f.cvss == 9.8
+
+    def test_severity_cvss_vector_string(self):
+        # OSV often puts a CVSS:3.x vector in score rather than a label like HIGH.
+        vector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+        f = osv_to_finding(_osv_raw(severity=[{"type": "CVSS_V3", "score": vector}]))
+        assert f is not None
+        assert f.cvss == 9.8
+        assert f.severity == "CRITICAL"
 
     def test_malware_forced_critical(self):
         f = osv_to_finding(_osv_raw(id="MAL-2024-1234", aliases=[]))

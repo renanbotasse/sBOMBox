@@ -26,11 +26,32 @@ def _nvd_metrics(cve: dict[str, Any]) -> tuple[Optional[float], Optional[str], O
         break
 
     tag = None
-    for w in cve.get("cveTags") or []:
-        if isinstance(w, dict) and w.get("tag"):
-            tag = w["tag"]
+    for entry in cve.get("cveTags") or []:
+        if isinstance(entry, dict) and entry.get("tag"):
+            tag = entry["tag"]
             break
     return score, severity, cve.get("vulnStatus") or tag
+
+
+def _apply_nvd_info(finding: Finding, info: dict[str, Any]) -> None:
+    """Apply cached NVD metrics. Rejected → UNKNOWN; Deferred keeps score/severity."""
+    score = info.get("score")
+    if score is not None:
+        try:
+            finding.cvss = float(score)
+        except (TypeError, ValueError):
+            pass
+
+    finding.nvd_status = info.get("status")
+    if (finding.nvd_status or "").lower() == "rejected":
+        finding.severity = "UNKNOWN"
+        return
+    if finding.severity != "UNKNOWN":
+        return
+    if info.get("severity"):
+        finding.severity = str(info["severity"]).upper()
+    elif finding.cvss is not None:
+        finding.severity = cvss_to_severity(finding.cvss)
 
 
 def enrich_nvd(
@@ -72,26 +93,12 @@ def enrich_nvd(
         cache[cve_id] = {"score": score, "severity": severity, "status": vuln_status}
     log("NVD: done")
 
-    for f in findings:
-        cve = first_cve(f.all_ids())
+    for finding in findings:
+        cve = first_cve(finding.all_ids())
         if not cve:
             continue
         link = CVE_ORG.format(id=cve)
-        if link not in f.references:
-            f.references.append(link)
-        if cve not in cache:
-            continue
-        info = cache[cve]
-        if info.get("score") is not None:
-            try:
-                f.cvss = float(info["score"])
-            except (TypeError, ValueError):
-                pass
-        if f.severity == "UNKNOWN":
-            if info.get("severity"):
-                f.severity = str(info["severity"]).upper()
-            elif f.cvss is not None:
-                f.severity = cvss_to_severity(f.cvss)
-        f.nvd_status = info.get("status")
-        if (f.nvd_status or "").lower() in {"rejected", "deferred"}:
-            f.severity = "UNKNOWN"
+        if link not in finding.references:
+            finding.references.append(link)
+        if cve in cache:
+            _apply_nvd_info(finding, cache[cve])

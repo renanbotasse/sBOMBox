@@ -3,7 +3,15 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from sbombox.models import Finding
-from sbombox.util import is_malware, max_severity, normalize_name, parse_severity, truncate
+from sbombox.util import (
+    cvss_to_severity,
+    extract_cvss_score,
+    is_malware,
+    max_severity,
+    normalize_name,
+    parse_severity,
+    truncate,
+)
 from sbombox.versioning import better_fixed_in, pick_fixed_version, version_key
 
 
@@ -17,12 +25,14 @@ def osv_to_finding(raw: dict[str, Any]) -> Optional[Finding]:
     summary = raw.get("summary") or raw.get("details") or ""
     summary = truncate(summary, 280) if isinstance(summary, str) else ""
 
-    severity = "UNKNOWN"
-    db = raw.get("database_specific") or {}
-    if isinstance(db, dict) and db.get("severity"):
-        severity = parse_severity(db.get("severity"))
+    db = raw.get("database_specific")
+    severity = parse_severity(db.get("severity") if isinstance(db, dict) else None)
     if severity == "UNKNOWN":
         severity = parse_severity(raw.get("severity"))
+
+    cvss = extract_cvss_score(raw.get("severity"))
+    if severity == "UNKNOWN" and cvss is not None:
+        severity = cvss_to_severity(cvss)
     if is_malware(vuln_id, *aliases):
         severity = "CRITICAL"
 
@@ -44,6 +54,7 @@ def osv_to_finding(raw: dict[str, Any]) -> Optional[Finding]:
         aliases=aliases,
         sources=["osv"],
         references=refs[:5],
+        cvss=cvss,
     )
 
 

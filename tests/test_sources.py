@@ -133,12 +133,22 @@ class TestQueryGithub:
 
 
 class TestNvd:
+    NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+
     def _cve(self, metrics=None, status="Analyzed", tags=None):
         return {"metrics": metrics or {}, "vulnStatus": status, "cveTags": tags}
 
+    def _v31(self, score, severity=None):
+        data = {"baseScore": score}
+        if severity is not None:
+            data["baseSeverity"] = severity
+        return {"cvssMetricV31": [{"cvssData": data}]}
+
+    def _client(self, cve):
+        return FakeClient({self.NVD_URL: (200, {"vulnerabilities": [{"cve": cve}]})})
+
     def test_metrics_v31(self):
-        metrics = {"cvssMetricV31": [{"cvssData": {"baseScore": 9.8, "baseSeverity": "CRITICAL"}}]}
-        assert _nvd_metrics(self._cve(metrics)) == (9.8, "CRITICAL", "Analyzed")
+        assert _nvd_metrics(self._cve(self._v31(9.8, "CRITICAL"))) == (9.8, "CRITICAL", "Analyzed")
 
     def test_metrics_v2_fallback(self):
         metrics = {"cvssMetricV2": [{"cvssData": {"baseScore": 6.5, "baseSeverity": "MEDIUM"}}]}
@@ -153,14 +163,7 @@ class TestNvd:
         assert _nvd_metrics(cve)[2] == "exclusively-hostile"
 
     def test_enrich_sets_cvss_and_link(self):
-        client = FakeClient(
-            {
-                "https://services.nvd.nist.gov/rest/json/cves/2.0": (
-                    200,
-                    {"vulnerabilities": [{"cve": self._cve({"cvssMetricV31": [{"cvssData": {"baseScore": 9.8, "baseSeverity": "CRITICAL"}}]})}]},
-                )
-            }
-        )
+        client = self._client(self._cve(self._v31(9.8, "CRITICAL")))
         f = Finding(vuln_id="PYSEC-1", package="a", version="1", severity="UNKNOWN",
                     aliases=["CVE-2020-0001"])
         enrich_nvd(client, [f], None)
@@ -170,18 +173,26 @@ class TestNvd:
         assert f.nvd_status == "Analyzed"
 
     def test_enrich_rejected_resets_severity(self):
-        client = FakeClient(
-            {
-                "https://services.nvd.nist.gov/rest/json/cves/2.0": (
-                    200,
-                    {"vulnerabilities": [{"cve": self._cve({"cvssMetricV31": [{"cvssData": {"baseScore": 9.8, "baseSeverity": "CRITICAL"}}]}, status="Rejected")}]},
-                )
-            }
-        )
+        client = self._client(self._cve(self._v31(9.8, "CRITICAL"), status="Rejected"))
         f = Finding(vuln_id="CVE-2020-0001", package="a", version="1", severity="CRITICAL")
         enrich_nvd(client, [f], None)
         assert f.severity == "UNKNOWN"
         assert (f.nvd_status or "").lower() == "rejected"
+
+    def test_enrich_deferred_keeps_severity(self):
+        client = self._client(self._cve(self._v31(7.5, "HIGH"), status="Deferred"))
+        f = Finding(vuln_id="CVE-2020-0001", package="a", version="1", severity="UNKNOWN")
+        enrich_nvd(client, [f], None)
+        assert f.cvss == 7.5
+        assert f.severity == "HIGH"
+        assert (f.nvd_status or "").lower() == "deferred"
+
+    def test_enrich_deferred_cvss_fallback_without_label(self):
+        client = self._client(self._cve(self._v31(9.1), status="Deferred"))
+        f = Finding(vuln_id="CVE-2020-0001", package="a", version="1", severity="UNKNOWN")
+        enrich_nvd(client, [f], None)
+        assert f.cvss == 9.1
+        assert f.severity == "CRITICAL"
 
     def test_enrich_no_cves_skips(self):
         client = FakeClient({})
@@ -191,14 +202,7 @@ class TestNvd:
         assert f.cvss is None
 
     def test_enrich_keeps_existing_higher_severity(self):
-        client = FakeClient(
-            {
-                "https://services.nvd.nist.gov/rest/json/cves/2.0": (
-                    200,
-                    {"vulnerabilities": [{"cve": self._cve({"cvssMetricV31": [{"cvssData": {"baseScore": 9.8, "baseSeverity": "CRITICAL"}}]})}]},
-                )
-            }
-        )
+        client = self._client(self._cve(self._v31(9.8, "CRITICAL")))
         f = Finding(vuln_id="CVE-2020-0001", package="a", version="1", severity="HIGH")
         enrich_nvd(client, [f], None)
         assert f.severity == "HIGH"  # OSV verdict wins; only UNKNOWN is upgraded

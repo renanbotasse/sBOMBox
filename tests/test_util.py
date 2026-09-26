@@ -6,6 +6,8 @@ import json
 
 from sbombox.util import (
     cvss_to_severity,
+    cvss_vector_base_score,
+    extract_cvss_score,
     first_cve,
     is_malware,
     max_severity,
@@ -23,6 +25,9 @@ class TestNormalizeName:
         assert normalize_name("My_Package.Name") == "my-package-name"
         assert normalize_name("Pillow") == "pillow"
         assert normalize_name("zope.interface") == "zope-interface"
+
+
+CVSS31_CRITICAL = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
 
 
 class TestSeverity:
@@ -57,6 +62,17 @@ class TestSeverity:
         assert parse_severity(["LOW", "CRITICAL"]) == "CRITICAL"
         assert parse_severity([{"score": 9.8}, "LOW"]) == "CRITICAL"
         assert parse_severity([]) == "UNKNOWN"
+
+    def test_parse_cvss_vector_dict(self):
+        assert parse_severity({"type": "CVSS_V3", "score": CVSS31_CRITICAL}) == "CRITICAL"
+
+    def test_parse_cvss_vector_string(self):
+        assert parse_severity(CVSS31_CRITICAL) == "CRITICAL"
+
+    def test_cvss_vector_known_score(self):
+        assert cvss_vector_base_score(CVSS31_CRITICAL) == 9.8
+        assert cvss_vector_base_score("not-a-vector") is None
+        assert extract_cvss_score([{"type": "CVSS_V3", "score": CVSS31_CRITICAL}]) == 9.8
 
     def test_cvss_bands(self):
         assert cvss_to_severity(9.0) == "CRITICAL"
